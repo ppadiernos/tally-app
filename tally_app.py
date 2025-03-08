@@ -5,10 +5,6 @@ import os
 # Define file path for saving counts
 SAVE_FILE = "counts.json"
 
-# GitHub Page URLs for sounds
-click_sound_path = "https://ppadiernos.github.io/tally-sounds/click.wav"
-reset_sound_path = "https://ppadiernos.github.io/tally-sounds/reset.wav"
-
 # Function to load counts from file
 def load_counts():
     if os.path.exists(SAVE_FILE):
@@ -32,97 +28,150 @@ def save_counts():
     with open(SAVE_FILE, "w") as f:
         json.dump(st.session_state.counts, f)
 
-# Initialize counts from file
-if 'counts' not in st.session_state:
+# Initialize counts and other state variables
+if "counts" not in st.session_state:
     st.session_state.counts = load_counts()
-
-# Track the last clicked category for highlighting
-if 'active_category' not in st.session_state:
+if "active_category" not in st.session_state:
     st.session_state.active_category = None
+if "last_action" not in st.session_state:
+    st.session_state.last_action = None
+if "redo_action" not in st.session_state:
+    st.session_state.redo_action = None
+if "confirm_reset" not in st.session_state:
+    st.session_state.confirm_reset = False
 
-# Ensure play_sound exists in session state
-if 'play_sound' not in st.session_state:
-    st.session_state.play_sound = None
-
-# ----- PAGE TITLE -----
-st.title("Response Tally App")
-
-# ----- BROWSER INSTRUCTIONS FOR AUTOPLAY -----
-st.markdown(
-    """
-    **Note**: If you want to hear the button clicks and reset sound every time, you may need to enable audio autoplay in your browser.
-
-    - **Google Chrome**:  
-      1. In the address bar, click the lock icon (or "Not Secure" text).  
-      2. Select "Site settings" from the dropdown.  
-      3. Under "Permissions," find "Sound" or "Autoplay" and set it to "Allow."
-
-    - **Safari**:  
-      1. Go to the **Safari** menu → **Settings for This Website**.  
-      2. Under "Auto-Play," select **"Allow All Auto-Play"**.  
-
-    After enabling autoplay, refresh this page to ensure repeated sounds are allowed.
-    """,
-    unsafe_allow_html=True
-)
+st.title("Talkback Counter")
 
 # ----- BUTTON CLICK LOGIC -----
 def update_count(category):
     st.session_state.counts[category] += 1
     st.session_state.active_category = category
-    save_counts()  # Save to file
-    st.session_state.play_sound = "click"  # Queue sound
-    st.rerun()  # Force UI refresh
+    st.session_state.last_action = {"category": category, "delta": 1}
+    st.session_state.redo_action = None
+    save_counts()
 
-# Layout: Two columns for buttons
-col1, col2 = st.columns(2)
+def undo_last_action():
+    action = st.session_state.last_action
+    if action:
+        cat = action["category"]
+        st.session_state.counts[cat] = max(0, st.session_state.counts[cat] - action["delta"])
+        st.session_state.redo_action = action
+        st.session_state.last_action = None
+        save_counts()
 
-# Create buttons dynamically
-for index, category in enumerate(st.session_state.counts.keys()):
-    if index % 2 == 0:
-        with col1:
-            if st.button(category, key=category):
-                update_count(category)
-    else:
-        with col2:
-            if st.button(category, key=category):
-                update_count(category)
+def redo_last_action():
+    action = st.session_state.redo_action
+    if action:
+        cat = action["category"]
+        st.session_state.counts[cat] += action["delta"]
+        st.session_state.last_action = action
+        st.session_state.redo_action = None
+        save_counts()
 
-# Display current tallies with GREEN highlight for active category
-st.subheader("Current Counts")
-for category, count in st.session_state.counts.items():
-    if category == st.session_state.active_category:
-        st.markdown(
-            f"<b style='color: green;'>▶ {category}: {count}</b>",
-            unsafe_allow_html=True
-        )
-    else:
-        st.write(f"{category}: {count}")
-
-# Reset button
-if st.button("Reset Counts"):
+def reset_counts():
     for category in st.session_state.counts:
         st.session_state.counts[category] = 0
     st.session_state.active_category = None
-    save_counts()  # Save reset state to file
-    st.session_state.play_sound = "reset"  # Queue reset sound
-    st.rerun()  # Force UI refresh
+    save_counts()
+    st.session_state.confirm_reset = False
 
-# Play sound AFTER the rerun completes
-if 'play_sound' in st.session_state and st.session_state.play_sound:
-    sound_path = click_sound_path if st.session_state.play_sound == "click" else reset_sound_path
-    st.markdown(
-        f"""
-        <audio id="sound" autoplay>
-            <source src="{sound_path}" type="audio/wav">
-        </audio>
-        <script>
-            setTimeout(() => {{
-                document.getElementById("sound").pause();
-                document.getElementById("sound").currentTime = 0;
-            }}, 2000);
-        </script>
-        """,
-        unsafe_allow_html=True,
-    )
-    st.session_state.play_sound = None  # Clear sound **AFTER** playing
+# Remove sound functions and variables
+# Also, we remove the blue hover effect by not injecting any custom hover CSS
+
+# We'll keep a simple CSS for our count cells so they have white text and are centered.
+st.markdown("""
+<style>
+.count-cell {
+    color: white;
+    text-align: center;
+    padding: 5px;
+}
+</style>
+""", unsafe_allow_html=True)
+
+# Group categories into Ontopic and Off Topic
+ontopic_categories = [cat for cat in st.session_state.counts if cat.startswith("Ontopic")]
+offtopic_categories = [cat for cat in st.session_state.counts if cat.startswith("Off Topic")]
+
+# Layout: Two columns for groups
+cols = st.columns(2)
+
+# --- Ontopic Group ---
+with cols[0]:
+    st.subheader("Ontopic")
+    # Header row for this group
+    header_cols = st.columns([3, 1])
+    with header_cols[0]:
+        st.markdown("<b>Category</b>", unsafe_allow_html=True)
+    with header_cols[1]:
+        st.markdown("<b>Count</b>", unsafe_allow_html=True)
+    # For each Ontopic category, display a row with the button and count
+    for cat in ontopic_categories:
+        row = st.columns([3, 1])
+        with row[0]:
+            label = f"▶ {cat}" if cat == st.session_state.active_category else cat
+            st.button(label, on_click=update_count, args=(cat,), key=f"ontopic_{cat}")
+        with row[1]:
+            count = st.session_state.counts[cat]
+            if cat == st.session_state.active_category:
+                st.markdown(f"<div class='count-cell'><span style='color: green; font-weight: bold;'>{count}</span></div>", unsafe_allow_html=True)
+            else:
+                st.markdown(f"<div class='count-cell'>{count}</div>", unsafe_allow_html=True)
+
+# --- Off Topic Group ---
+with cols[1]:
+    st.subheader("Off Topic")
+    header_cols = st.columns([3, 1])
+    with header_cols[0]:
+        st.markdown("<b>Category</b>", unsafe_allow_html=True)
+    with header_cols[1]:
+        st.markdown("<b>Count</b>", unsafe_allow_html=True)
+    for cat in offtopic_categories:
+        row = st.columns([3, 1])
+        with row[0]:
+            label = f"▶ {cat}" if cat == st.session_state.active_category else cat
+            st.button(label, on_click=update_count, args=(cat,), key=f"offtopic_{cat}")
+        with row[1]:
+            count = st.session_state.counts[cat]
+            if cat == st.session_state.active_category:
+                st.markdown(f"<div class='count-cell'><span style='color: green; font-weight: bold;'>{count}</span></div>", unsafe_allow_html=True)
+            else:
+                st.markdown(f"<div class='count-cell'>{count}</div>", unsafe_allow_html=True)
+
+# --- Undo/Redo Buttons (styled distinctly) ---
+st.markdown("""
+<style>
+.undo-redo-container button {
+    font-size: 1.2em;
+    padding: 10px 20px;
+    background-color: #e6e6fa;
+    border: 2px solid #4CAF50;
+    border-radius: 8px;
+    margin: 5px;
+}
+</style>
+""", unsafe_allow_html=True)
+
+st.markdown('<div class="undo-redo-container">', unsafe_allow_html=True)
+undo_redo_cols = st.columns(2)
+with undo_redo_cols[0]:
+    if st.button("⏪ Undo Last Action", key="undo-button", disabled=st.session_state.last_action is None):
+        undo_last_action()
+with undo_redo_cols[1]:
+    if st.button("⏩ Redo Last Action", key="redo-button", disabled=st.session_state.redo_action is None):
+        redo_last_action()
+st.markdown('</div>', unsafe_allow_html=True)
+
+# --- Reset Button with Confirmation ---
+if st.button("Reset Counts", key="reset"):
+    st.session_state.confirm_reset = True
+
+if st.session_state.confirm_reset:
+    st.warning("Are you sure you want to reset counts? (Double click to confirm)")
+    conf_cols = st.columns(2)
+    with conf_cols[0]:
+        if st.button("Confirm Reset"):
+            reset_counts()
+    with conf_cols[1]:
+        if st.button("Cancel Reset"):
+            st.session_state.confirm_reset = False
